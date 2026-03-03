@@ -19,16 +19,24 @@ def get_coin_data(url):
         name_match = re.search(r'[«"“](.*?)[»"”]', h1)
         coin_name = name_match.group(1) if name_match else h1
 
-        # 2. Характеристики
+        # 2. Собираем характеристики (улучшенный поиск)
         data_dict = {}
-        char_items = soup.find_all('div', class_='product-chars-item')
-        for item in char_items:
+        
+        # Ищем все элементы характеристик
+        items = soup.find_all('div', class_='product-chars-item')
+        if not items:
+            # Запасной вариант, если структура другая
+            items = soup.select('.product-info-chars div')
+
+        for item in items:
             lbl = item.find('div', class_='product-chars-label')
             val = item.find('div', class_='product-chars-value')
             if lbl and val:
-                data_dict[lbl.get_text(strip=True)] = val.get_text(strip=True)
+                key = lbl.get_text(strip=True).replace(':', '')
+                value = val.get_text(strip=True)
+                data_dict[key] = value
 
-        # Список нужных полей
+        # Список нужных полей (точно как на сайте)
         fields = [
             "Драгоценный металл", "Общий вес", "Проба металла", 
             "Чистого драгметалла", "Страна-эмитент монеты", "Номинал монеты", 
@@ -38,13 +46,23 @@ def get_coin_data(url):
 
         char_names_out = "\n".join(fields)
         
-        # Форматируем значения (точки на запятые, убираем унции)
         values_list = []
         for f in fields:
+            # Ищем значение в словаре (регистронезависимо)
             val = data_dict.get(f, "-")
+            
+            # Если не нашли, пробуем найти похожее (например "Металл" вместо "Драгоценный металл")
+            if val == "-":
+                for k, v in data_dict.items():
+                    if f.lower() in k.lower() or k.lower() in f.lower():
+                        val = v
+                        break
+            
+            # Форматирование
             val = val.replace('.', ',')
             if "1 тройская унция (" in val:
                 val = val.replace("1 тройская унция (", "").replace(")", "")
+            
             values_list.append(val)
         
         char_values_out = "\n".join(values_list)
