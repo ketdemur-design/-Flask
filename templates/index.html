@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Парсер Монет</title>
+    <style>
+        body { font-family: sans-serif; max-width: 800px; margin: 40px auto; line-height: 1.6; }
+        textarea { width: 100%; height: 150px; margin-bottom: 20px; font-family: monospace; }
+        input[type="text"] { width: 80%; padding: 10px; }
+        input[type="submit"] { padding: 10px 20px; cursor: pointer; }
+        .block { background: #f4f4f4; padding: 15px; border: 1px solid #ddd; margin-bottom: 20px; }
+        h3 { margin-top: 0; }
+    </style>
+</head>
+<body>
+    <h1>Парсер Zoloto-MD</h1>
+    <form method="post">
+        <input type="text" name="url" placeholder="Вставьте ссылку на монету" required>
+        <input type="submit" value="Получить данные">
+    </form>
+
+    {% if name %}
+        <h2>Результат:</h2>
+        
+        <h3>1. Название:</h3>
+        <div class="block"><pre>{{ name }}</pre></div>
+
+        <h3>2. Список характеристик:</h3>
+        <div class="block"><textarea readonly>{{ names }}</textarea></div>
+
+        <h3>3. Значения:</h3>
+        <div class="block"><textarea readonly>{{ vals }}</textarea></div>
+    {% endif %}
+</body>
+</html>
