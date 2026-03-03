@@ -8,20 +8,16 @@ app = Flask(__name__)
 def get_coin_data(url):
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
         'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7',
-        'Referer': 'https://zoloto-md.ru/',
-        'Connection': 'keep-alive',
     }
     
     try:
         session = requests.Session()
-        # Добавляем верификацию и таймаут
         response = session.get(url, headers=headers, timeout=20)
         
-        # Если сайт вернул ошибку (например 403), мы это увидим
         if response.status_code != 200:
-            return f"Сайт вернул ошибку {response.status_code}. Возможно, доступ заблокирован.", "-", "-"
+            return f"Ошибка доступа: {response.status_code}", "-", "-"
 
         response.encoding = 'utf-8'
         soup = BeautifulSoup(response.text, 'html.parser')
@@ -32,19 +28,28 @@ def get_coin_data(url):
         name_match = re.search(r'[«"“](.*?)[»"”]', title_text)
         coin_name = name_match.group(1) if name_match else title_text
 
-        # 2. Собираем характеристики
-        data_dict = {}
-        # Пробуем найти основной блок характеристик
-        chars_container = soup.select_one('.product-chars, .product-info-chars, .char-list')
+        # 2. УНИВЕРСАЛЬНЫЙ СБОР ХАРАКТЕРИСТИК (v.5)
+        # Собираем ВООБЩЕ ВСЕ пары "текст - значение" со страницы
+        raw_data = {}
         
-        # Собираем данные через поиск всех элементов с классом характеристик
-        items = soup.find_all('div', class_='product-chars-item')
-        for item in items:
-            lbl = item.find('div', class_='product-chars-label')
-            val = item.find('div', class_='product-chars-value')
-            if lbl and val:
-                key = lbl.get_text(strip=True).rstrip(':')
-                data_dict[key] = val.get_text(strip=True)
+        # Ищем во всех возможных блоках: div, li, tr
+        for element in soup.find_all(['div', 'tr', 'li']):
+            # Ищем внутри элементы, похожие на ярлык и значение
+            label = element.find(['div', 'span', 'td', 'dt'], class_=re.compile('label|name|title|char-name'))
+            value = element.find(['div', 'span', 'td', 'dd'], class_=re.compile('value|val|char-value'))
+            
+            if label and value:
+                l_text = label.get_text(strip=True).rstrip(':')
+                v_text = value.get_text(strip=True)
+                if l_text and v_text:
+                    raw_data[l_text] = v_text
+
+        # Если так не нашли, ищем по всей странице любой текст, содержащий ":"
+        if not raw_data:
+            for item in soup.find_all(text=re.compile('.:.')):
+                if ':' in item:
+                    parts = item.split(':', 1)
+                    raw_data[parts[0].strip()] = parts[1].strip()
 
         fields = [
             "Драгоценный металл", "Общий вес", "Проба металла", 
@@ -54,15 +59,17 @@ def get_coin_data(url):
         ]
 
         char_names_out = "\n".join(fields)
-        
         values_list = []
+        
         for f in fields:
             found_val = "-"
-            for k, v in data_dict.items():
+            # Ищем максимально похожее название в собранных данных
+            for k, v in raw_data.items():
                 if f.lower() in k.lower() or k.lower() in f.lower():
                     found_val = v
                     break
             
+            # Форматирование
             found_val = found_val.replace('.', ',')
             if "1 тройская унция (" in found_val:
                 found_val = found_val.replace("1 тройская унция (", "").replace(")", "")
@@ -71,14 +78,8 @@ def get_coin_data(url):
         
         char_values_out = "\n".join(values_list)
 
-        # Если мы нашли название, но список характеристик пуст
-        if not data_dict and coin_name:
-            return coin_name, char_names_out, "Ошибка: Характеристики на странице не найдены. Структура сайта изменилась."
-
         return coin_name, char_names_out, char_values_out
 
-    except requests.exceptions.RequestException as e:
-        return f"Ошибка соединения: {str(e)}", "-", "-"
     except Exception as e:
         return f"Системная ошибка: {str(e)}", "-", "-"
 
@@ -89,7 +90,6 @@ def index():
         url = request.form.get('url')
         if url:
             res_name, res_names, res_vals = get_coin_data(url)
-    
     return render_template('index.html', name=res_name, names=res_names, vals=res_vals)
 
 if __name__ == '__main__':
