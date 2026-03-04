@@ -9,48 +9,35 @@ def get_coin_data(url):
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-        'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7',
     }
     
     try:
         session = requests.Session()
         response = session.get(url, headers=headers, timeout=20)
         response.encoding = 'utf-8'
-        html_content = response.text
-        soup = BeautifulSoup(html_content, 'html.parser')
+        soup = BeautifulSoup(response.text, 'html.parser')
 
-        # 1. Извлекаем название
+        # 1. Название
         h1 = soup.find('h1')
         title_text = h1.get_text(strip=True) if h1 else "Не найдено"
         name_match = re.search(r'[«"“](.*?)[»"”]', title_text)
         coin_name = name_match.group(1) if name_match else title_text
 
-        # 2. СБОР ДАННЫХ (Ультра-гибкий метод v.10)
-        data_dict = {}
-
-        # Ищем все элементы, которые могут содержать характеристики (div, tr, li)
-        # Мы просто берем все текстовые блоки и ищем в них двоеточия
+        # 2. Собираем характеристики (Метод "Поиск по тексту" v.11)
+        # Мы просто сканируем все div-ы и ищем те, где есть текст и значение
+        raw_map = {}
         for item in soup.find_all(['div', 'tr', 'li']):
-            # Если внутри есть два четких блока (метка и значение)
-            label_node = item.find(class_=re.compile(r'label|name|title|char_name'))
-            value_node = item.find(class_=re.compile(r'value|val|char_value'))
+            # Ищем внутри блоки с названиями и значениями
+            lbl = item.find(class_=re.compile(r'label|name|char-name'))
+            val = item.find(class_=re.compile(r'value|val|char-value'))
             
-            if label_node and value_node:
-                k = label_node.get_text(strip=True).rstrip(':')
-                v = value_node.get_text(strip=True)
-                if k and v:
-                    data_dict[k] = v
-            
-            # Дополнительно проверяем текстовые строки с двоеточием внутри элемента
-            direct_text = item.get_text(" ", strip=True)
-            if ':' in direct_text and len(direct_text) < 200:
-                parts = direct_text.split(':', 1)
-                k_raw = parts[0].strip()
-                v_raw = parts[1].strip()
-                if k_raw and v_raw and k_raw not in data_dict:
-                    data_dict[k_raw] = v_raw
+            if lbl and val:
+                key = lbl.get_text(strip=True).rstrip(':').strip()
+                value = val.get_text(strip=True).strip()
+                if key and value:
+                    raw_map[key] = value
 
-        # Список полей, которые вам нужны
+        # Список нужных полей
         fields = [
             "Драгоценный металл", "Общий вес", "Проба металла", 
             "Чистого драгметалла", "Страна-эмитент монеты", "Номинал монеты", 
@@ -58,43 +45,50 @@ def get_coin_data(url):
             "Диаметр", "Качество чеканки монеты", "Упаковка", "Наличие сертификата"
         ]
 
-        # Синонимы для поиска (если на сайте поле называется иначе)
-        aliases = {
+        # Словарик синонимов, чтобы находить данные, даже если они названы чуть иначе
+        synonyms = {
             "Драгоценный металл": ["Металл"],
-            "Общий вес": ["Масса", "Вес"],
+            "Общий вес": ["Вес", "Масса"],
             "Проба металла": ["Проба"],
-            "Чистого драгметалла": ["Чистого металла"],
-            "Страна-эмитент монеты": ["Страна"],
+            "Чистого драгметалла": ["Чистого металла", "Вес чистого"],
+            "Страна-эмитент монеты": ["Страна", "Эмитент"],
+            "Номинал монеты": ["Номинал"],
+            "Валюта номинала": ["Валюта"],
             "Тираж монеты": ["Тираж"],
+            "Год выпуска": ["Год"],
             "Качество чеканки монеты": ["Качество"],
             "Наличие сертификата": ["Сертификат"]
         }
 
-        char_names_out = "\n".join(fields)
         values_list = []
-        
-        for f in fields:
-            val = "-"
-            # Составляем список имен для поиска: основное + синонимы
-            search_terms = [f.lower()] + [a.lower() for a in aliases.get(f, [])]
+        for field in fields:
+            found = "-"
+            # Составляем список слов для поиска
+            keys_to_check = [field.lower()] + [s.lower() for s in synonyms.get(field, [])]
             
-            # Проверяем наш словарь собранных данных
-            for k, v in data_dict.items():
+            # Проверяем наш собранный словарь
+            for k, v in raw_map.items():
                 k_low = k.lower()
-                if any(term == k_low or k_low.startswith(term) for term in search_terms):
-                    val = v
+                if any(term == k_low or k_low.startswith(term) for term in keys_to_check):
+                    found = v
                     break
             
-            # Очистка и форматирование
-            val = val.replace('.', ',')
-            if "1 тройская унция (" in val:
-                val = val.replace("1 тройская унция (", "").replace(")", "")
+            # ФОРМАТИРОВАНИЕ
+            # 1. Замена точек на запятые
+            found = found.replace('.', ',')
             
-            values_list.append(val)
-        
-        char_values_out = "\n".join(values_list)
+            # 2. Если это Общий вес, убираем "1 тройская унция (...)" и оставляем только вес в скобках
+            if field == "Общий вес" or field == "Чистого драгметалла":
+                # Ищем текст внутри скобок, например: (31,1 грамм)
+                match_weight = re.search(r'\((.*?)\)', found)
+                if match_weight:
+                    found = match_weight.group(1)
+                else:
+                    found = found.replace('1 тройская унция', '').strip()
 
-        return coin_name, char_names_out, char_values_out
+            values_list.append(found)
+
+        return coin_name, "\n".join(fields), "\n".join(values_list)
 
     except Exception as e:
         return f"Ошибка: {str(e)}", "-", "-"
