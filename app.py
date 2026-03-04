@@ -16,7 +16,8 @@ def get_coin_data(url):
         session = requests.Session()
         response = session.get(url, headers=headers, timeout=20)
         response.encoding = 'utf-8'
-        soup = BeautifulSoup(response.text, 'html.parser')
+        html_content = response.text
+        soup = BeautifulSoup(html_content, 'html.parser')
 
         # 1. Извлекаем название
         h1 = soup.find('h1')
@@ -24,28 +25,32 @@ def get_coin_data(url):
         name_match = re.search(r'[«"“](.*?)[»"”]', title_text)
         coin_name = name_match.group(1) if name_match else title_text
 
-        # 2. Собираем характеристики (Универсальный метод v.9)
-        # Мы ищем все блоки, где лежат пары Название-Значение
+        # 2. СБОР ДАННЫХ (Ультра-гибкий метод v.10)
         data_dict = {}
-        
-        # Перебираем все возможные блоки с характеристиками
-        # Метод 1: По классам сайта
-        for item in soup.select('.product-chars-item, .product-info-chars div, tr'):
-            lbl = item.select_one('.product-chars-label, .char-name, td:first-child, dt')
-            val = item.select_one('.product-chars-value, .char-value, td:last-child, dd')
-            if lbl and val:
-                key = lbl.get_text(strip=True).rstrip(':')
-                data_dict[key] = val.get_text(strip=True)
 
-        # Метод 2: Если первый метод нашел мало, ищем по любому тексту с двоеточием
-        if len(data_dict) < 5:
-            for element in soup.find_all(['div', 'li', 'p']):
-                txt = element.get_text(" ", strip=True)
-                if ':' in txt and len(txt) < 150:
-                    parts = txt.split(':', 1)
-                    data_dict[parts[0].strip()] = parts[1].strip()
+        # Ищем все элементы, которые могут содержать характеристики (div, tr, li)
+        # Мы просто берем все текстовые блоки и ищем в них двоеточия
+        for item in soup.find_all(['div', 'tr', 'li']):
+            # Если внутри есть два четких блока (метка и значение)
+            label_node = item.find(class_=re.compile(r'label|name|title|char_name'))
+            value_node = item.find(class_=re.compile(r'value|val|char_value'))
+            
+            if label_node and value_node:
+                k = label_node.get_text(strip=True).rstrip(':')
+                v = value_node.get_text(strip=True)
+                if k and v:
+                    data_dict[k] = v
+            
+            # Дополнительно проверяем текстовые строки с двоеточием внутри элемента
+            direct_text = item.get_text(" ", strip=True)
+            if ':' in direct_text and len(direct_text) < 200:
+                parts = direct_text.split(':', 1)
+                k_raw = parts[0].strip()
+                v_raw = parts[1].strip()
+                if k_raw and v_raw and k_raw not in data_dict:
+                    data_dict[k_raw] = v_raw
 
-        # Список полей, которые вам нужны (добавил Чистого драгметалла)
+        # Список полей, которые вам нужны
         fields = [
             "Драгоценный металл", "Общий вес", "Проба металла", 
             "Чистого драгметалла", "Страна-эмитент монеты", "Номинал монеты", 
@@ -53,24 +58,39 @@ def get_coin_data(url):
             "Диаметр", "Качество чеканки монеты", "Упаковка", "Наличие сертификата"
         ]
 
-        # Подготовка вывода
+        # Синонимы для поиска (если на сайте поле называется иначе)
+        aliases = {
+            "Драгоценный металл": ["Металл"],
+            "Общий вес": ["Масса", "Вес"],
+            "Проба металла": ["Проба"],
+            "Чистого драгметалла": ["Чистого металла"],
+            "Страна-эмитент монеты": ["Страна"],
+            "Тираж монеты": ["Тираж"],
+            "Качество чеканки монеты": ["Качество"],
+            "Наличие сертификата": ["Сертификат"]
+        }
+
         char_names_out = "\n".join(fields)
         values_list = []
         
         for f in fields:
-            res = "-"
-            # Ищем совпадение в словаре
+            val = "-"
+            # Составляем список имен для поиска: основное + синонимы
+            search_terms = [f.lower()] + [a.lower() for a in aliases.get(f, [])]
+            
+            # Проверяем наш словарь собранных данных
             for k, v in data_dict.items():
-                if f.lower() in k.lower() or k.lower() in f.lower():
-                    res = v
+                k_low = k.lower()
+                if any(term == k_low or k_low.startswith(term) for term in search_terms):
+                    val = v
                     break
             
-            # Форматирование: точки на запятые, удаление скобок
-            res = res.replace('.', ',')
-            if "1 тройская унция (" in res:
-                res = res.replace("1 тройская унция (", "").replace(")", "")
+            # Очистка и форматирование
+            val = val.replace('.', ',')
+            if "1 тройская унция (" in val:
+                val = val.replace("1 тройская унция (", "").replace(")", "")
             
-            values_list.append(res)
+            values_list.append(val)
         
         char_values_out = "\n".join(values_list)
 
